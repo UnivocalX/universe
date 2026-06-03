@@ -1,4 +1,4 @@
-module example.com/universe
+module github.com/UnivocalX/universe
 
 go 1.26.2
 
