@@ -162,7 +162,7 @@ func (p *Pipe[In, Out]) Buffer(size int) *Pipe[In, Out] {
 	return np
 }
 
-// Transform applies a transformation function to each value in the pipeline, returning a new pipeline with the transformed values. If the transformer returns an error, the error is emitted according to the pipeline's policy. The original pipeline is not modified.
+// Transform returns a new pipeline that applies the given transformation function to each value. The original pipeline is not modified. If the transformer returns an error, it will be emitted according to the pipeline's policy.
 func (p *Pipe[In, Out]) Transform(transformer func(Out) (Out, error)) *Pipe[In, Out] {
 	previousRun := p.run
 
@@ -201,7 +201,7 @@ func (p *Pipe[In, Out]) Transform(transformer func(Out) (Out, error)) *Pipe[In, 
 	return np
 }
 
-// Filter returns a new pipeline that only emits values that satisfy the given predicate. The original pipeline is not modified. If the predicate returns false, the value is dropped. Errors are emitted according to the pipeline's policy.
+// Filter returns a new pipeline that only emits values for which the predicate returns true. The original pipeline is not modified. Errors are emitted according to the pipeline's policy.
 func (p *Pipe[In, Out]) Filter(predicate func(Out) bool) *Pipe[In, Out] {
 	previousRun := p.run
 
@@ -300,7 +300,7 @@ func resolveTotalWorkers(workers int) int {
 	return workers
 }
 
-// Concurrent returns a new pipeline that processes values concurrently using the specified number of workers. The original pipeline is not modified. If workers is less than or equal to 0, the number of workers will be determined automatically based on the number of CPU cores. The order of output values is not guaranteed to match the input order. Errors are emitted according to the pipeline's policy.
+// Concurrent returns a new pipeline that processes values concurrently using the specified number of workers. The original pipeline is not modified. If workers is less than or equal to zero, it will default to the number of available CPU cores (up to a maximum of 8). Each worker will process values independently, and the output will be merged into a single stream. Errors are emitted according to the pipeline's policy.
 func (p *Pipe[In, Out]) Concurrent(workers int) *Pipe[In, Out] {
 	previousRun := p.run
 	workers = resolveTotalWorkers(workers)
@@ -319,7 +319,7 @@ func (p *Pipe[In, Out]) Concurrent(workers int) *Pipe[In, Out] {
 	return np
 }
 
-// Peek returns a new pipeline that allows observing each value and error as they pass through, without modifying them. The original pipeline is not modified. The observer function is called for every envelope, including those with errors. If the observer panics, the pipeline will be canceled.
+// Peek returns a new pipeline that allows observing each value and error as they pass through, without modifying them. The original pipeline is not modified. The observer function will be called for every value and error emitted by the pipeline, allowing for side effects such as logging or metrics. If the observer panics, the pipeline will be canceled and the panic will propagate.
 func (p *Pipe[In, Out]) Peek(observer func(Out, error)) *Pipe[In, Out] {
 	previousRun := p.run
 
@@ -349,20 +349,6 @@ func (p *Pipe[In, Out]) Peek(observer func(Out, error)) *Pipe[In, Out] {
 
 	return np
 }
-
-// Then chains two pipelines sequentially: the output of p becomes the input of next, returning a single combined pipeline.
-// Note: Go methods cannot introduce new type parameters, so next must have the same output type as p.
-// For cross-type chaining (e.g. Pipe[In, A] → Pipe[A, B]), use the package-level Map or a wrapper function.
-func (p *Pipe[In, Out]) Then(next *Pipe[Out, Out]) *Pipe[In, Out] {
-	np := p.clone()
-
-	np.run = func(in <-chan Envelope[In]) <-chan Envelope[Out] {
-		return next.run(p.run(in))
-	}
-
-	return np
-}
-
 
 // Operate returns a new pipeline that applies the given operator function to each envelope. The original pipeline is not modified. The operator function receives the entire envelope, allowing it to inspect and modify both the value and error. If the operator returns an error, it will be emitted according to the pipeline's policy.
 func (p *Pipe[In, Out]) Operate(operator func(Envelope[Out]) Envelope[Out]) *Pipe[In, Out] {
@@ -438,25 +424,6 @@ func Map[In, Out, Transformed any](p *Pipe[In, Out], transformer func(Out) (Tran
 		}()
 
 		return out
-	}
-
-	return np
-}
-
-// Join combines two pipelines. Both pipelines will receive the same input and their outputs will be merged. If other is nil, a clone of p is returned.
-func Join[In, Out any](p *Pipe[In, Out], other *Pipe[In, Out]) *Pipe[In, Out] {
-	if other == nil {
-		return p.clone()
-	}
-
-	previousRun := p.run
-
-	np := p.clone()
-	np.run = func(in <-chan Envelope[In]) <-chan Envelope[Out] {
-		left, right := Tee(np.ctx, in)
-		primary := previousRun(left)
-		secondary := other.run(right)
-		return Merge(np.ctx, primary, secondary)
 	}
 
 	return np
