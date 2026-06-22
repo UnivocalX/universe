@@ -10,19 +10,11 @@ type Stream[T any] <-chan Envelope[T]
 
 // Drain consumes all values from the stream and discards them. This is useful for pipelines where you only care about side effects and not the final output. It also allows upstream stages to continue processing without being blocked by a full channel if the downstream stages are not consuming values.
 func (s Stream[T]) Drain(ctx context.Context) {
-	Drain(ctx, s)
-}
-
-func Drain[T any](ctx context.Context, stream <-chan T) {
-	if stream == nil {
-		return
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case _, ok := <-stream:
+		case _, ok := <-s:
 			if !ok {
 				return
 			}
@@ -40,28 +32,38 @@ func (s Stream[T]) Await(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
+
 			if env.Err != nil {
-				// Drain the remaining items in the background so upstream goroutines
-				// are not blocked trying to send to an unread channel.
-				go s.Drain(ctx)
 				return env.Err
 			}
 		}
 	}
 }
 
-// Collect returns a Seq that allows iterating over the values in the stream. The Seq will yield each value wrapped in an Envelope, which may contain an error. If the context is canceled while collecting, the Seq will stop yielding values and return. This allows you to use the stream with any code that can consume a Seq, such as for loops or other iteration patterns.
-func (s Stream[T]) Collect(ctx context.Context) iter.Seq[Envelope[T]] {
-	return Collect(ctx, (<-chan Envelope[T])(s))
+// All collects all values from the stream into a slice of Envelopes. If the context is canceled while collecting, it will return the values collected so far along with the context's error. This is useful for testing or when you need to work with all results at once, but be cautious when using it with large streams as it may consume a lot of memory.
+func (s Stream[T]) All(ctx context.Context) []Envelope[T] {
+	var results []Envelope[T]
+	for {
+		select {
+		case <-ctx.Done():
+			return results
+		case env, ok := <-s:
+			if !ok {
+				return results
+			}
+			results = append(results, env)
+		}
+	}
 }
 
-func Collect[T any](ctx context.Context, stream <-chan T) iter.Seq[T] {
-	return func(yield func(T) bool) {
+// Collect returns a Seq that allows iterating over the values in the stream. The Seq will yield each value wrapped in an Envelope, which may contain an error. If the context is canceled while collecting, the Seq will stop yielding values and return. This allows you to use the stream with any code that can consume a Seq, such as for loops or other iteration patterns.
+func (s Stream[T]) Collect(ctx context.Context) iter.Seq[Envelope[T]] {
+	return func(yield func(Envelope[T]) bool) {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case v, ok := <-stream:
+			case v, ok := <-s:
 				if !ok {
 					return
 				}
@@ -75,18 +77,13 @@ func Collect[T any](ctx context.Context, stream <-chan T) iter.Seq[T] {
 
 // Take returns a slice containing up to the specified number of values from the stream. If the context is canceled while taking values, it will return the values collected so far along with the context's error. If the stream is closed before reaching the specified size, it will return all available values. This is useful for batch processing or when you want to limit the number of items processed at a time.
 func (s Stream[T]) Take(ctx context.Context, size int) []Envelope[T] {
-	return Take(ctx, s, size)
-}
-
-func Take[T any](ctx context.Context, stream <-chan T, size int) []T {
-	out := make([]T, 0, size)
+	out := make([]Envelope[T], 0, size)
 
 	for len(out) < size {
 		select {
 		case <-ctx.Done():
 			return out
-
-		case v, ok := <-stream:
+		case v, ok := <-s:
 			if !ok {
 				return out
 			}
@@ -106,7 +103,7 @@ func (s Stream[T]) ForEach(ctx context.Context, fn func(T, error)) {
 
 // Count returns the total number of values in the stream. If the context is canceled while counting, it will return the count so far along with the context's error. This is useful for determining how many items were processed or for debugging purposes to see how many items are flowing through a pipeline.
 func (s Stream[T]) Count(ctx context.Context) int {
-	i := 0 
+	i := 0
 	for range s.Collect(ctx) {
 		i++
 	}

@@ -350,6 +350,20 @@ func (p *Pipe[In, Out]) Peek(observer func(Out, error)) *Pipe[In, Out] {
 	return np
 }
 
+// Then chains two pipelines sequentially: the output of p becomes the input of next, returning a single combined pipeline.
+// Note: Go methods cannot introduce new type parameters, so next must have the same output type as p.
+// For cross-type chaining (e.g. Pipe[In, A] → Pipe[A, B]), use the package-level Map or a wrapper function.
+func (p *Pipe[In, Out]) Then(next *Pipe[Out, Out]) *Pipe[In, Out] {
+	np := p.clone()
+
+	np.run = func(in <-chan Envelope[In]) <-chan Envelope[Out] {
+		return next.run(p.run(in))
+	}
+
+	return np
+}
+
+
 // Operate returns a new pipeline that applies the given operator function to each envelope. The original pipeline is not modified. The operator function receives the entire envelope, allowing it to inspect and modify both the value and error. If the operator returns an error, it will be emitted according to the pipeline's policy.
 func (p *Pipe[In, Out]) Operate(operator func(Envelope[Out]) Envelope[Out]) *Pipe[In, Out] {
 	previousRun := p.run
@@ -424,19 +438,6 @@ func Map[In, Out, Transformed any](p *Pipe[In, Out], transformer func(Out) (Tran
 		}()
 
 		return out
-	}
-
-	return np
-}
-
-// Then chains two pipelines sequentially: the output of p becomes the input of next, returning a single combined pipeline.
-// Note: Go methods cannot introduce new type parameters, so next must have the same output type as p.
-// For cross-type chaining (e.g. Pipe[In, A] → Pipe[A, B]), use the package-level Map or a wrapper function.
-func (p *Pipe[In, Out]) Then(next *Pipe[Out, Out]) *Pipe[In, Out] {
-	np := p.clone()
-
-	np.run = func(in <-chan Envelope[In]) <-chan Envelope[Out] {
-		return next.run(p.run(in))
 	}
 
 	return np
