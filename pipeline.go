@@ -430,8 +430,10 @@ func Map[In, Out, Transformed any](p *Pipe[In, Out], transformer func(Out) (Tran
 }
 
 // Then chains two pipelines sequentially: the output of p becomes the input of next, returning a single combined pipeline.
-func Then[In, Mid, Out any](p *Pipe[In, Mid], next *Pipe[Mid, Out]) *Pipe[In, Out] {
-	np := NewPipe[In, Out](p.policy, p.ctx, p.source, nil)
+// Note: Go methods cannot introduce new type parameters, so next must have the same output type as p.
+// For cross-type chaining (e.g. Pipe[In, A] → Pipe[A, B]), use the package-level Map or a wrapper function.
+func (p *Pipe[In, Out]) Then(next *Pipe[Out, Out]) *Pipe[In, Out] {
+	np := p.clone()
 
 	np.run = func(in <-chan Envelope[In]) <-chan Envelope[Out] {
 		return next.run(p.run(in))
