@@ -17,7 +17,7 @@ func TestFrom(t *testing.T) {
 	// check results
 	seen := make(Set[int])
 	count := 0
-	for env := range Collect(tc.Context, result) {
+	for env := range result.Collect(tc.Context) {
 		if env.Err != nil {
 			t.Fatalf("unexpected error: %v", env.Err)
 		}
